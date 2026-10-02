@@ -3,8 +3,6 @@
 Tiny, extremely fast sanitisation, normalisation, transformation, validation
 and PII/secret scrubbing. **Zero runtime dependencies.** Node ≥ 18.
 
-by [Aleks Linde](https://alekslinde.com)
-
 ```js
 import { compilePolicy, profiles } from '@rinsadev/core';
 
@@ -94,7 +92,9 @@ processJSONWith('{"email":"a@b.co","pw":"x"}', {
 Objects/Maps/arrays/Buffers, CSV (`processCSV` with per-column rules),
 KV records (`processKV`), depth/key/array caps, circular → `null`.
 
-## Performance (node 22, Apple M-series)
+## Performance
+
+Node 22, Apple M-series:
 
 | case | throughput |
 |---|---|

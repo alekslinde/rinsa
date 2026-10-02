@@ -1,24 +1,42 @@
 // SPDX-FileCopyrightText: 2026 Aleksandr Linde
 // SPDX-License-Identifier: Apache-2.0
 
-// Minimal, dependency-free Markdown -> HTML for the docs site.
-// Supports only what docs/index.md uses: headings, fenced code blocks,
-// tables, bold/italic/code/links, lists, and paragraphs.
+// Builds the docs site from the README, which is the single source of truth
+// for prose: it is what npm and GitHub render, so it cannot be generated from
+// something else. Two things differ on the site and are applied here rather
+// than kept as a second copy of the text:
+//
+//   1. Repo-relative links (LICENSE, NOTICE, CONTRIBUTING.md) resolve on
+//      GitHub but 404 on the site, so they are rewritten to absolute blob
+//      URLs.
+//   2. The README's Install section is deliberately one line; the site has
+//      room for every package manager, so docs/install.md replaces it.
+//
+// Markdown is parsed by markdown-it, so this file holds only the page
+// template and the two transforms above. Correct Markdown parsing is a solved
+// problem; keeping a bespoke one here earned nothing the library needed.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import MarkdownIt from 'markdown-it';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const srcPath = path.join(root, 'docs', 'index.md');
-const outDir = path.join(root, 'docs-site');
+// DOCS_OUT_DIR lets the test build somewhere disposable instead of depending
+// on, or clobbering, the working docs-site/.
+const outDir = process.env.DOCS_OUT_DIR
+  ? path.resolve(process.env.DOCS_OUT_DIR)
+  : path.join(root, 'docs-site');
 const outPath = path.join(outDir, 'index.html');
 
-const md = readFileSync(srcPath, 'utf8');
+const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+const installFragment = readFileSync(path.join(root, 'docs', 'install.md'), 'utf8');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 // Single source of truth for the canonical origin: the CNAME this script writes.
 const site = 'https://rinsa.dev';
+const repo = 'https://github.com/alekslinde/rinsa';
+const blob = `${repo}/blob/main`;
 const pageTitle = 'rinsa — fast data sanitisation, validation and PII scrubbing for Node';
 const description = pkg.description;
 
@@ -31,140 +49,134 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// Strip HTML comments from a fragment before it is parsed. markdown-it would
+// pass them through as raw HTML, and a comment may hold build metadata (the
+// sitemap's updated: marker) or notes that must not reach the page.
+//
+// Removing a comment can splice its surroundings into a new opener, so one
+// pass is not enough: "<!-<!-- x -->- y -->" leaves a live "<!--" behind.
+// Repeat to a fixed point, then assert no opener survived rather than
+// trusting the loop — a marker reaching the page is a silent disclosure, so
+// it should fail the build instead.
+function stripComments(md) {
+  let out = md;
+  let previous;
+  do {
+    previous = out;
+    out = out.replace(/<!--[\s\S]*?--!?>/g, '');
+  } while (out !== previous);
+  // An unterminated comment is the one case the loop cannot resolve: it has an
+  // opener and no terminator, so nothing matches and nothing is removed.
+  if (out.includes('<!--')) {
+    throw new Error('unterminated HTML comment in docs source; close it with -->');
+  }
+  return out;
+}
+
+// Replace the section with this heading, up to the next heading of the same or
+// a higher level. Throws rather than silently rendering the README's own
+// Install section, so a renamed heading fails the build instead of shipping
+// a page that quietly lost five package managers.
+function replaceSection(md, heading, replacement) {
+  const open = new RegExp(`^##[ \\t]+${heading}[ \\t]*$`, 'm');
+  const start = md.search(open);
+  if (start === -1) throw new Error(`README has no "## ${heading}" section to replace`);
+  // Search for the terminating heading from the end of the opening heading's
+  // line, not from start+1: the heading line itself starts with '##' and
+  // would otherwise match as its own terminator, leaving the old body in
+  // place after the replacement.
+  const bodyStart = start + md.slice(start).match(open)[0].length;
+  const rest = md.slice(bodyStart);
+  const nextHeading = rest.search(/^#{1,2}[ \t]+\S/m);
+  const end = nextHeading === -1 ? md.length : bodyStart + nextHeading;
+  return md.slice(0, start) + replacement.trim() + '\n\n' + md.slice(end);
+}
+
+// Repo-relative links only resolve inside the repository. Leave anything with
+// a scheme, a protocol-relative prefix or a bare fragment alone.
+function absolutiseLinks(md) {
+  return md.replace(/\]\(([^)]+)\)/g, (match, href) => {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return match;
+    return `](${blob}/${href.replace(/^\.?\//, '')})`;
+  });
+}
+
+const source = absolutiseLinks(
+  replaceSection(stripComments(readme), 'Install', stripComments(installFragment)),
+);
+
+const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
+
+// Heading ids + a hover anchor, and collect the sidebar TOC on the way past.
+const toc = [];
+const slugCounts = new Map();
+
 function slugify(text) {
-  return text
+  const base = text
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
     .trim()
     .replace(/\s+/g, '-');
+  // Duplicate headings would otherwise produce two elements with one id, and
+  // every anchor to it would land on the first.
+  const seen = slugCounts.get(base) ?? 0;
+  slugCounts.set(base, seen + 1);
+  return seen === 0 ? base : `${base}-${seen}`;
 }
 
-function inline(text) {
-  let out = escapeHtml(text);
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  return out;
-}
+md.renderer.rules.heading_open = (tokens, idx) => {
+  const token = tokens[idx];
+  const level = Number(token.tag.slice(1));
+  const text = tokens[idx + 1].content;
+  const slug = slugify(text);
+  token.attrSet('id', slug);
+  if (level <= 2) toc.push({ level, text, slug });
+  return `<${token.tag} id="${escapeHtml(slug)}">`;
+};
 
-const lines = md.split('\n');
-const toc = [];
-let html = '';
-let i = 0;
+md.renderer.rules.heading_close = (tokens, idx) => {
+  const slug = tokens[idx - 2].attrGet('id');
+  const anchor = `<a class="anchor" href="#${escapeHtml(slug)}" aria-label="Link to this section">#</a>`;
+  return `${anchor}</${tokens[idx].tag}>\n`;
+};
 
-function closeList(openList) {
-  if (openList) html += '</ul>\n';
-}
+// Fenced code gets a copy button; the wrapper is what the click handler walks
+// up to. Two accessibility details here:
+//   - <pre> scrolls horizontally, so it needs tabindex to be reachable by
+//     keyboard, plus a role and name so the region is announced.
+//   - The button carries no aria-label: a label would override its text
+//     content permanently, so the "Copied" confirmation would never be
+//     announced. Its visible text is already its accessible name.
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx];
+  const lang = token.info.trim() || 'text';
+  const label = `Code sample (${escapeHtml(lang)})`;
+  return (
+    '<div class="code-block">' +
+    '<button class="copy-btn" type="button">Copy</button>' +
+    `<pre role="region" aria-label="${label}" tabindex="0">` +
+    `<code class="lang-${escapeHtml(lang)}">${escapeHtml(token.content)}</code>` +
+    '</pre>' +
+    '</div>\n'
+  );
+};
 
-let inCode = false;
-let codeLang = '';
-let codeBuf = [];
-let openList = false;
-let tableBuf = [];
+// Tables need a scroll container on narrow screens. A scrollable region is
+// only reachable by keyboard if something in it can take focus, so the
+// wrapper is a labelled, tabbable group: without tabindex, a keyboard user
+// cannot scroll a wide table at all. The label borrows the section heading,
+// so the page's tables are told apart rather than all announced as "Table".
+md.renderer.rules.table_open = () => {
+  const section = toc.length ? `${toc[toc.length - 1].text} table` : 'Table';
+  return `<div class="table-wrap" role="region" aria-label="${escapeHtml(section)}" tabindex="0"><table>\n`;
+};
+md.renderer.rules.table_close = () => '</table></div>\n';
 
-function flushTable() {
-  if (tableBuf.length === 0) return;
-  const rows = tableBuf.filter((r, idx) => !(idx === 1 && /^\s*\|?\s*-+/.test(r)));
-  html += '<div class="table-wrap"><table>\n';
-  rows.forEach((row, idx) => {
-    const cells = row
-      .trim()
-      .replace(/^\||\|$/g, '')
-      .split('|')
-      .map((c) => c.trim());
-    const tag = idx === 0 ? 'th' : 'td';
-    html += '<tr>' + cells.map((c) => `<${tag}>${inline(c)}</${tag}>`).join('') + '</tr>\n';
-  });
-  html += '</table></div>\n';
-  tableBuf = [];
-}
+// Every header cell in these tables labels its column, so scope="col" lets a
+// screen reader announce the column name with each data cell.
+md.renderer.rules.th_open = () => '<th scope="col">';
 
-while (i < lines.length) {
-  const line = lines[i];
-
-  if (line.startsWith('```')) {
-    if (!inCode) {
-      inCode = true;
-      codeLang = line.slice(3).trim();
-      codeBuf = [];
-    } else {
-      inCode = false;
-      const code = escapeHtml(codeBuf.join('\n'));
-      html += `<div class="code-block"><button class="copy-btn" type="button" aria-label="Copy code">Copy</button><pre><code class="lang-${escapeHtml(codeLang || 'text')}">${code}</code></pre></div>\n`;
-    }
-    i++;
-    continue;
-  }
-
-  if (inCode) {
-    codeBuf.push(line);
-    i++;
-    continue;
-  }
-
-  // HTML comments carry build metadata (e.g. the sitemap's updated: marker)
-  // or private notes, and must never reach the rendered page. Consume the
-  // whole comment, however many lines it spans: matching only a single line
-  // would let the inner lines of a multi-line comment fall through as
-  // paragraphs. Both '-->' and the legacy '--!>' close a comment, so a
-  // terminator check that knows only the former runs on and swallows the
-  // rest of the document.
-  if (/^\s*<!--/.test(line)) {
-    while (i < lines.length && !/--!?>/.test(lines[i])) i++;
-    i++; // the terminator's line, or past the end if unterminated
-    continue;
-  }
-
-  if (/^\s*\|.*\|\s*$/.test(line)) {
-    tableBuf.push(line);
-    i++;
-    continue;
-  } else if (tableBuf.length) {
-    flushTable();
-  }
-
-  const heading = line.match(/^(#{1,3})\s+(.*)$/);
-  if (heading) {
-    closeList(openList);
-    openList = false;
-    const level = heading[1].length;
-    const text = heading[2].trim();
-    const slug = slugify(text);
-    if (level <= 2) toc.push({ level, text, slug });
-    html += `<h${level} id="${slug}">${inline(text)}<a class="anchor" href="#${slug}" aria-label="Link to this section">#</a></h${level}>\n`;
-    i++;
-    continue;
-  }
-
-  const listItem = line.match(/^-\s+(.*)$/);
-  if (listItem) {
-    if (!openList) {
-      html += '<ul>\n';
-      openList = true;
-    }
-    let text = listItem[1];
-    while (lines[i + 1] && /^\s{2,}\S/.test(lines[i + 1])) {
-      i++;
-      text += ' ' + lines[i].trim();
-    }
-    html += `<li>${inline(text)}</li>\n`;
-    i++;
-    continue;
-  } else if (openList) {
-    closeList(openList);
-    openList = false;
-  }
-
-  if (line.trim() === '') {
-    i++;
-    continue;
-  }
-
-  html += `<p>${inline(line.trim())}</p>\n`;
-  i++;
-}
-closeList(openList);
-flushTable();
+const html = md.render(source);
 
 const navLinks = toc
   .map((t) => `<a class="nav-link lvl-${t.level}" href="#${t.slug}">${escapeHtml(t.text)}</a>`)
@@ -198,6 +210,9 @@ const page = `<!doctype html>
     --code-bg: #f6f6f6;
     --accent: #0a5cff;
     --link: #0a5cff;
+    /* Focus ring, kept distinct from --accent so it stays visible against
+       accent-coloured elements. */
+    --focus: #0a5cff;
     --max-width: 820px;
   }
   @media (prefers-color-scheme: dark) {
@@ -209,6 +224,7 @@ const page = `<!doctype html>
       --code-bg: #1a1a1b;
       --accent: #5b9dff;
       --link: #5b9dff;
+      --focus: #8fbcff;
     }
   }
   :root[data-theme="dark"] {
@@ -219,6 +235,7 @@ const page = `<!doctype html>
     --code-bg: #1a1a1b;
     --accent: #5b9dff;
     --link: #5b9dff;
+    --focus: #8fbcff;
   }
   * { box-sizing: border-box; }
   body {
@@ -227,6 +244,36 @@ const page = `<!doctype html>
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     line-height: 1.6;
+  }
+  /* One visible focus indicator for everything focusable. :focus-visible
+     keeps it off mouse clicks while guaranteeing keyboard users can always
+     see where they are. */
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 10;
+    padding: 10px 16px;
+    background: var(--bg);
+    color: var(--link);
+    border: 1px solid var(--border);
+    border-radius: 0 0 6px 0;
+  }
+  /* Off-screen until focused, so the first Tab offers a way past the
+     table-of-contents links straight to the content. */
+  .skip-link:focus { left: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
   .layout {
     display: flex;
@@ -272,7 +319,11 @@ const page = `<!doctype html>
     font-weight: 400;
     font-size: 0.8em;
   }
-  h1:hover .anchor, h2:hover .anchor, h3:hover .anchor { opacity: 1; }
+  /* Revealed on hover for pointer users and on focus for keyboard users: an
+     opacity-0 link is still tabbable, so without :focus-visible it would take
+     focus while staying invisible. */
+  h1:hover .anchor, h2:hover .anchor, h3:hover .anchor,
+  .anchor:focus-visible { opacity: 1; }
   a { color: var(--link); }
   p { color: var(--fg); }
   code {
@@ -318,9 +369,33 @@ const page = `<!doctype html>
   table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
   th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
   th { background: var(--code-bg); }
-  ul { padding-left: 1.3em; }
+  ul, ol { padding-left: 1.3em; }
   li { margin: 0.3em 0; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+  }
+  em { font-style: italic; }
   .top-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  /* main takes tabindex="-1" so the skip link can move focus to it; that
+     must not paint a focus ring, since it is a scripted target and not a
+     control the user tabbed to. */
+  main:focus { outline: none; }
+  /* Available to screen readers, not painted. clip-path over display:none,
+     which would remove it from the accessibility tree entirely. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
   footer.page-footer {
     margin-top: 3em;
     border-top: 1px solid var(--border);
@@ -331,45 +406,79 @@ const page = `<!doctype html>
 </style>
 </head>
 <body>
+<a class="skip-link" href="#content">Skip to content</a>
 <div class="layout">
-<nav class="sidebar">
+<nav class="sidebar" aria-label="Sections">
 ${navLinks}
 </nav>
-<main>
-<div class="top-links">
-<a href="https://github.com/alekslinde/rinsa">GitHub</a>
+<main id="content" tabindex="-1">
+<nav class="top-links" aria-label="Project links">
+<a href="${repo}">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
-<a href="https://alekslinde.com" rel="author">alekslinde.com</a>
-</div>
-${html}
-<footer class="page-footer">
+</nav>
+${html}<footer class="page-footer">
 <p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>
 </footer>
 </main>
 </div>
+<div id="copy-status" class="visually-hidden" role="status" aria-live="polite"></div>
 <script>
-document.addEventListener('click', function (e) {
-  var btn = e.target.closest('.copy-btn');
-  if (!btn) return;
-  var code = btn.parentElement.querySelector('code');
-  if (!code) return;
-  navigator.clipboard.writeText(code.textContent).then(function () {
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
+(function () {
+  // A single polite live region announces the copy result. Changing only the
+  // button's own text would not reliably be announced while focus stays on
+  // it, and a failed copy would otherwise be silent for everyone.
+  var status = document.getElementById('copy-status');
+
+  function announce(message) {
+    if (!status) return;
+    status.textContent = '';
+    // Re-setting identical text is not a change, so consecutive copies would
+    // announce only once; the clear above plus this tick guarantees both.
+    setTimeout(function () {
+      status.textContent = message;
+    }, 50);
+  }
+
+  function settle(btn, label, ok) {
+    btn.textContent = label;
+    btn.classList.toggle('copied', ok);
+    announce(ok ? 'Code copied to clipboard' : 'Copy failed. Select the code and copy manually.');
     setTimeout(function () {
       btn.textContent = 'Copy';
       btn.classList.remove('copied');
     }, 1500);
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.copy-btn');
+    if (!btn) return;
+    var code = btn.parentElement.querySelector('code');
+    if (!code) return;
+    // clipboard is undefined on insecure origins and rejects when permission
+    // is denied, so an unhandled promise would leave the button silent.
+    if (!navigator.clipboard) {
+      settle(btn, 'Failed', false);
+      return;
+    }
+    navigator.clipboard.writeText(code.textContent).then(
+      function () {
+        settle(btn, 'Copied', true);
+      },
+      function () {
+        settle(btn, 'Failed', false);
+      },
+    );
   });
-});
+})();
 </script>
 </body>
 </html>
 `;
 
 // Build-time, not request-time: a stable date keeps rebuilds byte-identical,
-// so an unchanged source does not churn <lastmod> on every CI run.
-const lastmod = (md.match(/^<!--\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*-->$/m) || [])[1];
+// so an unchanged source does not churn <lastmod> on every CI run. Read from
+// the raw README, before comments are stripped.
+const lastmod = (readme.match(/^<!--\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*--!?>$/m) || [])[1];
 
 const robots = `User-agent: *
 Allow: /
