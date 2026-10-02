@@ -123,21 +123,41 @@ md.renderer.rules.heading_close = (tokens, idx) => {
   return `${anchor}</${tokens[idx].tag}>\n`;
 };
 
-// Fenced code gets a copy button; the wrapper is what the click handler walks up to.
+// Fenced code gets a copy button; the wrapper is what the click handler walks
+// up to. Two accessibility details here:
+//   - <pre> scrolls horizontally, so it needs tabindex to be reachable by
+//     keyboard, plus a role and name so the region is announced.
+//   - The button carries no aria-label: a label would override its text
+//     content permanently, so the "Copied" confirmation would never be
+//     announced. Its visible text is already its accessible name.
 md.renderer.rules.fence = (tokens, idx) => {
   const token = tokens[idx];
   const lang = token.info.trim() || 'text';
+  const label = `Code sample (${escapeHtml(lang)})`;
   return (
     '<div class="code-block">' +
-    '<button class="copy-btn" type="button" aria-label="Copy code">Copy</button>' +
-    `<pre><code class="lang-${escapeHtml(lang)}">${escapeHtml(token.content)}</code></pre>` +
+    '<button class="copy-btn" type="button">Copy</button>' +
+    `<pre role="region" aria-label="${label}" tabindex="0">` +
+    `<code class="lang-${escapeHtml(lang)}">${escapeHtml(token.content)}</code>` +
+    '</pre>' +
     '</div>\n'
   );
 };
 
-// Tables need a scroll container on narrow screens.
-md.renderer.rules.table_open = () => '<div class="table-wrap"><table>\n';
+// Tables need a scroll container on narrow screens. A scrollable region is
+// only reachable by keyboard if something in it can take focus, so the
+// wrapper is a labelled, tabbable group: without tabindex, a keyboard user
+// cannot scroll a wide table at all. The label borrows the section heading,
+// so the page's tables are told apart rather than all announced as "Table".
+md.renderer.rules.table_open = () => {
+  const section = toc.length ? `${toc[toc.length - 1].text} table` : 'Table';
+  return `<div class="table-wrap" role="region" aria-label="${escapeHtml(section)}" tabindex="0"><table>\n`;
+};
 md.renderer.rules.table_close = () => '</table></div>\n';
+
+// Every header cell in these tables labels its column, so scope="col" lets a
+// screen reader announce the column name with each data cell.
+md.renderer.rules.th_open = () => '<th scope="col">';
 
 const html = md.render(source);
 
@@ -173,6 +193,9 @@ const page = `<!doctype html>
     --code-bg: #f6f6f6;
     --accent: #0a5cff;
     --link: #0a5cff;
+    /* Focus ring, kept distinct from --accent so it stays visible against
+       accent-coloured elements. */
+    --focus: #0a5cff;
     --max-width: 820px;
   }
   @media (prefers-color-scheme: dark) {
@@ -184,6 +207,7 @@ const page = `<!doctype html>
       --code-bg: #1a1a1b;
       --accent: #5b9dff;
       --link: #5b9dff;
+      --focus: #8fbcff;
     }
   }
   :root[data-theme="dark"] {
@@ -194,6 +218,7 @@ const page = `<!doctype html>
     --code-bg: #1a1a1b;
     --accent: #5b9dff;
     --link: #5b9dff;
+    --focus: #8fbcff;
   }
   * { box-sizing: border-box; }
   body {
@@ -202,6 +227,36 @@ const page = `<!doctype html>
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     line-height: 1.6;
+  }
+  /* One visible focus indicator for everything focusable. :focus-visible
+     keeps it off mouse clicks while guaranteeing keyboard users can always
+     see where they are. */
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 10;
+    padding: 10px 16px;
+    background: var(--bg);
+    color: var(--link);
+    border: 1px solid var(--border);
+    border-radius: 0 0 6px 0;
+  }
+  /* Off-screen until focused, so the first Tab offers a way past the
+     table-of-contents links straight to the content. */
+  .skip-link:focus { left: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
   .layout {
     display: flex;
@@ -247,7 +302,11 @@ const page = `<!doctype html>
     font-weight: 400;
     font-size: 0.8em;
   }
-  h1:hover .anchor, h2:hover .anchor, h3:hover .anchor { opacity: 1; }
+  /* Revealed on hover for pointer users and on focus for keyboard users: an
+     opacity-0 link is still tabbable, so without :focus-visible it would take
+     focus while staying invisible. */
+  h1:hover .anchor, h2:hover .anchor, h3:hover .anchor,
+  .anchor:focus-visible { opacity: 1; }
   a { color: var(--link); }
   p { color: var(--fg); }
   code {
@@ -303,6 +362,23 @@ const page = `<!doctype html>
   }
   em { font-style: italic; }
   .top-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  /* main takes tabindex="-1" so the skip link can move focus to it; that
+     must not paint a focus ring, since it is a scripted target and not a
+     control the user tabbed to. */
+  main:focus { outline: none; }
+  /* Available to screen readers, not painted. clip-path over display:none,
+     which would remove it from the accessibility tree entirely. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
   footer.page-footer {
     margin-top: 3em;
     border-top: 1px solid var(--border);
@@ -313,36 +389,71 @@ const page = `<!doctype html>
 </style>
 </head>
 <body>
+<a class="skip-link" href="#content">Skip to content</a>
 <div class="layout">
-<nav class="sidebar">
+<nav class="sidebar" aria-label="Sections">
 ${navLinks}
 </nav>
-<main>
-<div class="top-links">
+<main id="content" tabindex="-1">
+<nav class="top-links" aria-label="Project links">
 <a href="${repo}">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
 <a href="https://alekslinde.com" rel="author">alekslinde.com</a>
-</div>
+</nav>
 ${html}<footer class="page-footer">
 <p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>
 </footer>
 </main>
 </div>
+<div id="copy-status" class="visually-hidden" role="status" aria-live="polite"></div>
 <script>
-document.addEventListener('click', function (e) {
-  var btn = e.target.closest('.copy-btn');
-  if (!btn) return;
-  var code = btn.parentElement.querySelector('code');
-  if (!code) return;
-  navigator.clipboard.writeText(code.textContent).then(function () {
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
+(function () {
+  // A single polite live region announces the copy result. Changing only the
+  // button's own text would not reliably be announced while focus stays on
+  // it, and a failed copy would otherwise be silent for everyone.
+  var status = document.getElementById('copy-status');
+
+  function announce(message) {
+    if (!status) return;
+    status.textContent = '';
+    // Re-setting identical text is not a change, so consecutive copies would
+    // announce only once; the clear above plus this tick guarantees both.
+    setTimeout(function () {
+      status.textContent = message;
+    }, 50);
+  }
+
+  function settle(btn, label, ok) {
+    btn.textContent = label;
+    btn.classList.toggle('copied', ok);
+    announce(ok ? 'Code copied to clipboard' : 'Copy failed. Select the code and copy manually.');
     setTimeout(function () {
       btn.textContent = 'Copy';
       btn.classList.remove('copied');
     }, 1500);
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.copy-btn');
+    if (!btn) return;
+    var code = btn.parentElement.querySelector('code');
+    if (!code) return;
+    // clipboard is undefined on insecure origins and rejects when permission
+    // is denied, so an unhandled promise would leave the button silent.
+    if (!navigator.clipboard) {
+      settle(btn, 'Failed', false);
+      return;
+    }
+    navigator.clipboard.writeText(code.textContent).then(
+      function () {
+        settle(btn, 'Copied', true);
+      },
+      function () {
+        settle(btn, 'Failed', false);
+      },
+    );
   });
-});
+})();
 </script>
 </body>
 </html>

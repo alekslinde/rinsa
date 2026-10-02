@@ -119,6 +119,83 @@ describe('docs build', () => {
     assert.ok(!/<!--(?!\[if)/.test(html.replace(/<!doctype[^>]*>/i, '')), 'comment reached output');
   });
 
+  test('every table header declares its scope', () => {
+    const html = build();
+    const headers = [...html.matchAll(/<th\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(headers.length > 0, 'expected the page to have table headers');
+    for (const th of headers) {
+      assert.match(th, /scope="col"/, `header cell ${th} has no scope`);
+    }
+  });
+
+  test('scrollable regions are keyboard reachable and named', () => {
+    // A region that scrolls but cannot take focus is unusable by keyboard.
+    const html = build();
+    const regions = [...html.matchAll(/<(?:pre|div class="table-wrap")\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(regions.length > 0, 'expected scrollable regions');
+    for (const region of regions) {
+      assert.match(region, /tabindex="0"/, `${region} is not keyboard reachable`);
+      assert.match(region, /aria-label="[^"]+"/, `${region} has no accessible name`);
+    }
+  });
+
+  test('copy buttons rely on their text for an accessible name', () => {
+    // An aria-label would permanently override the text, so the "Copied"
+    // confirmation would never be announced.
+    const html = build();
+    const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(buttons.length > 0, 'expected copy buttons');
+    for (const button of buttons) {
+      assert.ok(!/aria-label/.test(button), `${button} overrides its own text`);
+    }
+  });
+
+  test('provides a skip link pointing at a real target', () => {
+    const html = build();
+    const skip = html.match(/<a class="skip-link" href="#([^"]+)"/);
+    assert.ok(skip, 'page has no skip link');
+    assert.ok(html.includes(`id="${skip[1]}"`), `skip link target #${skip[1]} does not exist`);
+  });
+
+  test('names every navigation landmark', () => {
+    // Two unnamed <nav>s are indistinguishable in a landmark list.
+    for (const nav of build().match(/<nav\b[^>]*>/g) ?? []) {
+      assert.match(nav, /aria-label="[^"]+"/, `${nav} has no accessible name`);
+    }
+  });
+
+  test('honours prefers-reduced-motion and defines focus styles', () => {
+    const html = build();
+    assert.match(html, /@media \(prefers-reduced-motion: reduce\)/);
+    assert.match(html, /:focus-visible\s*\{/, 'no visible focus indicator');
+  });
+
+  test('exposes a live region for copy feedback', () => {
+    const html = build();
+    assert.match(html, /aria-live="polite"/, 'copy result is never announced');
+    assert.match(html, /role="status"/);
+  });
+
+  test('handles clipboard failure instead of leaving a dead button', () => {
+    // navigator.clipboard is absent on insecure origins and rejects when
+    // permission is denied; an unhandled promise means a silent no-op.
+    const html = build();
+    assert.match(html, /if \(!navigator\.clipboard\)/, 'no guard for missing clipboard API');
+    assert.match(html, /Copy failed/, 'no failure message for the user');
+  });
+
+  test('starts headings at h1 and never skips a level', () => {
+    const levels = [...build().matchAll(/<h([1-6])\b/g)].map((m) => Number(m[1]));
+    assert.equal(levels[0], 1, 'page should start at h1');
+    assert.equal(levels.filter((l) => l === 1).length, 1, 'expected exactly one h1');
+    for (let i = 1; i < levels.length; i++) {
+      assert.ok(
+        levels[i] - levels[i - 1] <= 1,
+        `heading jumps from h${levels[i - 1]} to h${levels[i]}`,
+      );
+    }
+  });
+
   test('does not leak absolute filesystem paths', () => {
     // Build-machine paths in a published page disclose the author's machine.
     const html = build();
