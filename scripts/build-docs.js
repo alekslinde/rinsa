@@ -398,7 +398,6 @@ ${navLinks}
 <nav class="top-links" aria-label="Project links">
 <a href="${repo}">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
-<a href="https://alekslinde.com" rel="author">alekslinde.com</a>
 </nav>
 ${html}<footer class="page-footer">
 <p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>

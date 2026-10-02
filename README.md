@@ -3,8 +3,6 @@
 Tiny, extremely fast sanitisation, normalisation, transformation, validation
 and PII/secret scrubbing. **Zero runtime dependencies.** Node ≥ 18.
 
-by [Aleks Linde](https://alekslinde.com)
-
 ```js
 import { compilePolicy, profiles } from '@rinsadev/core';
 
