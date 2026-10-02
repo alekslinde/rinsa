@@ -1,0 +1,16 @@
+rinsa
+Copyright 2026 Aleksandr Linde
+
+This product includes software developed by Aleksandr Linde.
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of
+the License at http://www.apache.org/licenses/LICENSE-2.0
+
+Third-party components
+----------------------
+
+rinsa has no runtime dependencies. Nothing third-party is bundled into the
+published package, so there are no further attribution requirements.
+
+TypeScript and @types/node are used at build time only and are not
+redistributed as part of this package.

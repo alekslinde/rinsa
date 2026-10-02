@@ -1,0 +1,6 @@
+version = 1
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Aleksandr Linde"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,0 +1,37 @@
+{
+  "name": "rinsa",
+  "version": "0.1.0",
+  "description": "Tiny, extremely fast data sanitisation, normalisation, transformation, validation and PII/secret scrubbing. Zero runtime dependencies.",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/esm/index.d.ts"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "build": "npm run clean && npm run build:esm && npm run build:cjs",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node scripts/fix-cjs.js && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
+    "clean": "rm -rf dist",
+    "test": "npm run build:esm && node --test test/*.test.js",
+    "test:src": "npm run build:esm && node --test test/*.test.js",
+    "bench": "npm run build:esm && node bench/run.js",
+    "bench:alloc": "npm run build:esm && node bench/alloc.js",
+    "example": "npm run build:esm && node examples/basic.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["sanitize", "normalize", "validate", "pii", "scrub", "gdpr", "fast", "zero-dependency"],
+  "license": "Apache-2.0",
+  "engines": { "node": ">=18" },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  },
+  "dependencies": {}
+}
