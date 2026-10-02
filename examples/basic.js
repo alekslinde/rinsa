@@ -9,7 +9,7 @@ import {
   compileScrubber,
   compilePolicy,
   profiles,
-} from 'rinsa';
+} from '@rinsadev/core';
 
 console.log(sanitize('  Héllo   WORLD\u200b  ')); // 'Héllo WORLD'
 console.log(normalizePhone('+1 (415) 555-0132')); // '+14155550132'

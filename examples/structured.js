@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Aleksandr Linde
 // SPDX-License-Identifier: Apache-2.0
 
-import { processJSONWith, processCSV, processKV, compileStructured } from 'rinsa';
+import { processJSONWith, processCSV, processKV, compileStructured } from '@rinsadev/core';
 
 // JSON with field-specific rules
 console.log(
