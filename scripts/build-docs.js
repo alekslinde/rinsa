@@ -158,6 +158,7 @@ const page = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rinsa &mdash; docs</title>
 <meta name="description" content="Tiny, extremely fast data sanitisation, normalisation, transformation, validation and PII/secret scrubbing. Zero runtime dependencies.">
+<meta name="author" content="Aleks Linde">
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -290,7 +291,14 @@ const page = `<!doctype html>
   th { background: var(--code-bg); }
   ul { padding-left: 1.3em; }
   li { margin: 0.3em 0; }
-  .top-links { display: flex; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  .top-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  footer.page-footer {
+    margin-top: 3em;
+    border-top: 1px solid var(--border);
+    padding-top: 1em;
+    color: var(--muted);
+    font-size: 0.85em;
+  }
 </style>
 </head>
 <body>
@@ -302,8 +310,12 @@ ${navLinks}
 <div class="top-links">
 <a href="https://github.com/alekslinde/rinsa">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
+<a href="https://alekslinde.com" rel="author">alekslinde.com</a>
 </div>
 ${html}
+<footer class="page-footer">
+<p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>
+</footer>
 </main>
 </div>
 <script>
