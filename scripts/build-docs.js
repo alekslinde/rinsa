@@ -104,11 +104,14 @@ while (i < lines.length) {
 
   // HTML comments carry build metadata (e.g. the sitemap's updated: marker)
   // or private notes, and must never reach the rendered page. Consume the
-  // whole comment, however many lines it spans: a single-line regexp would
-  // let the inner lines of a multi-line comment fall through as paragraphs.
+  // whole comment, however many lines it spans: matching only a single line
+  // would let the inner lines of a multi-line comment fall through as
+  // paragraphs. Both '-->' and the legacy '--!>' close a comment, so a
+  // terminator check that knows only the former runs on and swallows the
+  // rest of the document.
   if (/^\s*<!--/.test(line)) {
-    while (i < lines.length && !/-->/.test(lines[i])) i++;
-    i++; // the line holding '-->', or past the end if unterminated
+    while (i < lines.length && !/--!?>/.test(lines[i])) i++;
+    i++; // the terminator's line, or past the end if unterminated
     continue;
   }
 
