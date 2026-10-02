@@ -3,6 +3,8 @@
 Tiny, extremely fast sanitisation, normalisation, transformation, validation
 and PII/secret scrubbing. **Zero runtime dependencies.** Node ≥ 18.
 
+by [Aleks Linde](https://alekslinde.com)
+
 ```js
 import { compilePolicy, profiles } from '@rinsadev/core';
 
@@ -139,7 +141,7 @@ patent licence over their contributions, and that grant terminates for anyone
 who starts patent litigation over the project. For a library meant to be
 embedded, that protects both you and your users.
 
-Copyright 2026 Aleksandr Linde. Third-party credits: [NOTICE](NOTICE) — rinsa
+Copyright 2026 [Aleksandr Linde](https://alekslinde.com). Third-party credits: [NOTICE](NOTICE) — rinsa
 has no runtime dependencies, so there are none to credit.
 
 Licensing metadata follows [REUSE](https://reuse.software/); run `reuse lint`

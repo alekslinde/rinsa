@@ -15,6 +15,12 @@ const outDir = path.join(root, 'docs-site');
 const outPath = path.join(outDir, 'index.html');
 
 const md = readFileSync(srcPath, 'utf8');
+const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+// Single source of truth for the canonical origin: the CNAME this script writes.
+const site = 'https://rinsa.dev';
+const pageTitle = 'rinsa — fast data sanitisation, validation and PII scrubbing for Node';
+const description = pkg.description;
 
 function escapeHtml(s) {
   return s
@@ -96,6 +102,19 @@ while (i < lines.length) {
     continue;
   }
 
+  // HTML comments carry build metadata (e.g. the sitemap's updated: marker)
+  // or private notes, and must never reach the rendered page. Consume the
+  // whole comment, however many lines it spans: matching only a single line
+  // would let the inner lines of a multi-line comment fall through as
+  // paragraphs. Both '-->' and the legacy '--!>' close a comment, so a
+  // terminator check that knows only the former runs on and swallows the
+  // rest of the document.
+  if (/^\s*<!--/.test(line)) {
+    while (i < lines.length && !/--!?>/.test(lines[i])) i++;
+    i++; // the terminator's line, or past the end if unterminated
+    continue;
+  }
+
   if (/^\s*\|.*\|\s*$/.test(line)) {
     tableBuf.push(line);
     i++;
@@ -156,8 +175,19 @@ const page = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rinsa &mdash; docs</title>
-<meta name="description" content="Tiny, extremely fast data sanitisation, normalisation, transformation, validation and PII/secret scrubbing. Zero runtime dependencies.">
+<title>${escapeHtml(pageTitle)}</title>
+<meta name="description" content="${escapeHtml(description)}">
+<meta name="author" content="Aleks Linde">
+<link rel="canonical" href="${site}/">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="rinsa">
+<meta property="og:title" content="${escapeHtml(pageTitle)}">
+<meta property="og:description" content="${escapeHtml(description)}">
+<meta property="og:url" content="${site}/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${escapeHtml(pageTitle)}">
+<meta name="twitter:description" content="${escapeHtml(description)}">
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -290,7 +320,14 @@ const page = `<!doctype html>
   th { background: var(--code-bg); }
   ul { padding-left: 1.3em; }
   li { margin: 0.3em 0; }
-  .top-links { display: flex; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  .top-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
+  footer.page-footer {
+    margin-top: 3em;
+    border-top: 1px solid var(--border);
+    padding-top: 1em;
+    color: var(--muted);
+    font-size: 0.85em;
+  }
 </style>
 </head>
 <body>
@@ -302,8 +339,12 @@ ${navLinks}
 <div class="top-links">
 <a href="https://github.com/alekslinde/rinsa">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
+<a href="https://alekslinde.com" rel="author">alekslinde.com</a>
 </div>
 ${html}
+<footer class="page-footer">
+<p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>
+</footer>
 </main>
 </div>
 <script>
@@ -326,8 +367,28 @@ document.addEventListener('click', function (e) {
 </html>
 `;
 
+// Build-time, not request-time: a stable date keeps rebuilds byte-identical,
+// so an unchanged source does not churn <lastmod> on every CI run.
+const lastmod = (md.match(/^<!--\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*-->$/m) || [])[1];
+
+const robots = `User-agent: *
+Allow: /
+
+Sitemap: ${site}/sitemap.xml
+`;
+
+const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url>
+<loc>${site}/</loc>${lastmod ? `\n<lastmod>${lastmod}</lastmod>` : ''}
+</url>
+</urlset>
+`;
+
 mkdirSync(outDir, { recursive: true });
 writeFileSync(outPath, page);
-writeFileSync(path.join(outDir, 'CNAME'), 'rinsa.dev\n');
+writeFileSync(path.join(outDir, 'CNAME'), `${new URL(site).hostname}\n`);
 writeFileSync(path.join(outDir, '.nojekyll'), '');
+writeFileSync(path.join(outDir, 'robots.txt'), robots);
+writeFileSync(path.join(outDir, 'sitemap.xml'), sitemap);
 console.log(`Built ${outPath}`);
