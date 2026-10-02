@@ -1,5 +1,5 @@
 {
-  "name": "rinsa",
+  "name": "@rinsadev/core",
   "version": "0.1.0",
   "description": "Tiny, extremely fast data sanitisation, normalisation, transformation, validation and PII/secret scrubbing. Zero runtime dependencies.",
   "type": "module",

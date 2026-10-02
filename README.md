@@ -4,7 +4,7 @@ Tiny, extremely fast sanitisation, normalisation, transformation, validation
 and PII/secret scrubbing. **Zero runtime dependencies.** Node ≥ 18.
 
 ```js
-import { compilePolicy, profiles } from 'rinsa';
+import { compilePolicy, profiles } from '@rinsadev/core';
 
 const process = compilePolicy(profiles.freeText()).process;
 process('  Contact  bob@example.com  '); // 'Contact [REDACTED]'
@@ -24,7 +24,7 @@ process('  Contact  bob@example.com  '); // 'Contact [REDACTED]'
 ## Install
 
 ```sh
-npm i rinsa
+npm i @rinsadev/core
 ```
 
 ## Quick start
@@ -37,7 +37,7 @@ import {
   validateObjectWith,   // schema validation, values never echoed
   compileScrubber,      // PII + secrets with per-type actions
   processJSONWith,      // JSON with field-specific rules
-} from 'rinsa';
+} from '@rinsadev/core';
 
 // Per-type scrub actions: redact | replace | mask | hash | hmac | tokenize | truncate | drop | keep
 const scrub = compileScrubber({
@@ -74,7 +74,7 @@ Transparent starting policies (plain objects — spread/override anything):
 `identifier email phone numeric url humanName freeText logData llmInput analytics`
 
 ```js
-import { compilePolicy, profiles } from 'rinsa';
+import { compilePolicy, profiles } from '@rinsadev/core';
 compilePolicy(profiles.analytics()).process('user bob@example.com');
 // 'user 5ff860bf1190596c'  (deterministic hash — joinable, raw value gone)
 ```
