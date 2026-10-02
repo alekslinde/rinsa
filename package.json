@@ -24,6 +24,7 @@
     "bench": "npm run build:esm && node bench/run.js",
     "bench:alloc": "npm run build:esm && node bench/alloc.js",
     "example": "npm run build:esm && node examples/basic.js",
+    "docs": "node scripts/build-docs.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": ["sanitize", "normalize", "validate", "pii", "scrub", "gdpr", "fast", "zero-dependency"],
@@ -35,7 +36,8 @@
   "engines": { "node": ">=18" },
   "devDependencies": {
     "typescript": "^5.5.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "markdown-it": "^15.0.2"
   },
   "dependencies": {}
 }

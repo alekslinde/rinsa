@@ -94,7 +94,9 @@ processJSONWith('{"email":"a@b.co","pw":"x"}', {
 Objects/Maps/arrays/Buffers, CSV (`processCSV` with per-column rules),
 KV records (`processKV`), depth/key/array caps, circular → `null`.
 
-## Performance (node 22, Apple M-series)
+## Performance
+
+Node 22, Apple M-series:
 
 | case | throughput |
 |---|---|

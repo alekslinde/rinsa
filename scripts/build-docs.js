@@ -1,24 +1,42 @@
 // SPDX-FileCopyrightText: 2026 Aleksandr Linde
 // SPDX-License-Identifier: Apache-2.0
 
-// Minimal, dependency-free Markdown -> HTML for the docs site.
-// Supports only what docs/index.md uses: headings, fenced code blocks,
-// tables, bold/italic/code/links, lists, and paragraphs.
+// Builds the docs site from the README, which is the single source of truth
+// for prose: it is what npm and GitHub render, so it cannot be generated from
+// something else. Two things differ on the site and are applied here rather
+// than kept as a second copy of the text:
+//
+//   1. Repo-relative links (LICENSE, NOTICE, CONTRIBUTING.md) resolve on
+//      GitHub but 404 on the site, so they are rewritten to absolute blob
+//      URLs.
+//   2. The README's Install section is deliberately one line; the site has
+//      room for every package manager, so docs/install.md replaces it.
+//
+// Markdown is parsed by markdown-it, so this file holds only the page
+// template and the two transforms above. Correct Markdown parsing is a solved
+// problem; keeping a bespoke one here earned nothing the library needed.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import MarkdownIt from 'markdown-it';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const srcPath = path.join(root, 'docs', 'index.md');
-const outDir = path.join(root, 'docs-site');
+// DOCS_OUT_DIR lets the test build somewhere disposable instead of depending
+// on, or clobbering, the working docs-site/.
+const outDir = process.env.DOCS_OUT_DIR
+  ? path.resolve(process.env.DOCS_OUT_DIR)
+  : path.join(root, 'docs-site');
 const outPath = path.join(outDir, 'index.html');
 
-const md = readFileSync(srcPath, 'utf8');
+const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+const installFragment = readFileSync(path.join(root, 'docs', 'install.md'), 'utf8');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 // Single source of truth for the canonical origin: the CNAME this script writes.
 const site = 'https://rinsa.dev';
+const repo = 'https://github.com/alekslinde/rinsa';
+const blob = `${repo}/blob/main`;
 const pageTitle = 'rinsa — fast data sanitisation, validation and PII scrubbing for Node';
 const description = pkg.description;
 
@@ -31,140 +49,97 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// Strip HTML comments from a fragment before it is parsed. markdown-it would
+// pass them through as raw HTML, and a comment may hold build metadata (the
+// sitemap's updated: marker) or notes that must not reach the page.
+function stripComments(md) {
+  return md.replace(/<!--[\s\S]*?--!?>/g, '');
+}
+
+// Replace the section with this heading, up to the next heading of the same or
+// a higher level. Throws rather than silently rendering the README's own
+// Install section, so a renamed heading fails the build instead of shipping
+// a page that quietly lost five package managers.
+function replaceSection(md, heading, replacement) {
+  const open = new RegExp(`^##[ \\t]+${heading}[ \\t]*$`, 'm');
+  const start = md.search(open);
+  if (start === -1) throw new Error(`README has no "## ${heading}" section to replace`);
+  // Search for the terminating heading from the end of the opening heading's
+  // line, not from start+1: the heading line itself starts with '##' and
+  // would otherwise match as its own terminator, leaving the old body in
+  // place after the replacement.
+  const bodyStart = start + md.slice(start).match(open)[0].length;
+  const rest = md.slice(bodyStart);
+  const nextHeading = rest.search(/^#{1,2}[ \t]+\S/m);
+  const end = nextHeading === -1 ? md.length : bodyStart + nextHeading;
+  return md.slice(0, start) + replacement.trim() + '\n\n' + md.slice(end);
+}
+
+// Repo-relative links only resolve inside the repository. Leave anything with
+// a scheme, a protocol-relative prefix or a bare fragment alone.
+function absolutiseLinks(md) {
+  return md.replace(/\]\(([^)]+)\)/g, (match, href) => {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return match;
+    return `](${blob}/${href.replace(/^\.?\//, '')})`;
+  });
+}
+
+const source = absolutiseLinks(
+  replaceSection(stripComments(readme), 'Install', stripComments(installFragment)),
+);
+
+const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
+
+// Heading ids + a hover anchor, and collect the sidebar TOC on the way past.
+const toc = [];
+const slugCounts = new Map();
+
 function slugify(text) {
-  return text
+  const base = text
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
     .trim()
     .replace(/\s+/g, '-');
+  // Duplicate headings would otherwise produce two elements with one id, and
+  // every anchor to it would land on the first.
+  const seen = slugCounts.get(base) ?? 0;
+  slugCounts.set(base, seen + 1);
+  return seen === 0 ? base : `${base}-${seen}`;
 }
 
-function inline(text) {
-  let out = escapeHtml(text);
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  return out;
-}
+md.renderer.rules.heading_open = (tokens, idx) => {
+  const token = tokens[idx];
+  const level = Number(token.tag.slice(1));
+  const text = tokens[idx + 1].content;
+  const slug = slugify(text);
+  token.attrSet('id', slug);
+  if (level <= 2) toc.push({ level, text, slug });
+  return `<${token.tag} id="${escapeHtml(slug)}">`;
+};
 
-const lines = md.split('\n');
-const toc = [];
-let html = '';
-let i = 0;
+md.renderer.rules.heading_close = (tokens, idx) => {
+  const slug = tokens[idx - 2].attrGet('id');
+  const anchor = `<a class="anchor" href="#${escapeHtml(slug)}" aria-label="Link to this section">#</a>`;
+  return `${anchor}</${tokens[idx].tag}>\n`;
+};
 
-function closeList(openList) {
-  if (openList) html += '</ul>\n';
-}
+// Fenced code gets a copy button; the wrapper is what the click handler walks up to.
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx];
+  const lang = token.info.trim() || 'text';
+  return (
+    '<div class="code-block">' +
+    '<button class="copy-btn" type="button" aria-label="Copy code">Copy</button>' +
+    `<pre><code class="lang-${escapeHtml(lang)}">${escapeHtml(token.content)}</code></pre>` +
+    '</div>\n'
+  );
+};
 
-let inCode = false;
-let codeLang = '';
-let codeBuf = [];
-let openList = false;
-let tableBuf = [];
+// Tables need a scroll container on narrow screens.
+md.renderer.rules.table_open = () => '<div class="table-wrap"><table>\n';
+md.renderer.rules.table_close = () => '</table></div>\n';
 
-function flushTable() {
-  if (tableBuf.length === 0) return;
-  const rows = tableBuf.filter((r, idx) => !(idx === 1 && /^\s*\|?\s*-+/.test(r)));
-  html += '<div class="table-wrap"><table>\n';
-  rows.forEach((row, idx) => {
-    const cells = row
-      .trim()
-      .replace(/^\||\|$/g, '')
-      .split('|')
-      .map((c) => c.trim());
-    const tag = idx === 0 ? 'th' : 'td';
-    html += '<tr>' + cells.map((c) => `<${tag}>${inline(c)}</${tag}>`).join('') + '</tr>\n';
-  });
-  html += '</table></div>\n';
-  tableBuf = [];
-}
-
-while (i < lines.length) {
-  const line = lines[i];
-
-  if (line.startsWith('```')) {
-    if (!inCode) {
-      inCode = true;
-      codeLang = line.slice(3).trim();
-      codeBuf = [];
-    } else {
-      inCode = false;
-      const code = escapeHtml(codeBuf.join('\n'));
-      html += `<div class="code-block"><button class="copy-btn" type="button" aria-label="Copy code">Copy</button><pre><code class="lang-${escapeHtml(codeLang || 'text')}">${code}</code></pre></div>\n`;
-    }
-    i++;
-    continue;
-  }
-
-  if (inCode) {
-    codeBuf.push(line);
-    i++;
-    continue;
-  }
-
-  // HTML comments carry build metadata (e.g. the sitemap's updated: marker)
-  // or private notes, and must never reach the rendered page. Consume the
-  // whole comment, however many lines it spans: matching only a single line
-  // would let the inner lines of a multi-line comment fall through as
-  // paragraphs. Both '-->' and the legacy '--!>' close a comment, so a
-  // terminator check that knows only the former runs on and swallows the
-  // rest of the document.
-  if (/^\s*<!--/.test(line)) {
-    while (i < lines.length && !/--!?>/.test(lines[i])) i++;
-    i++; // the terminator's line, or past the end if unterminated
-    continue;
-  }
-
-  if (/^\s*\|.*\|\s*$/.test(line)) {
-    tableBuf.push(line);
-    i++;
-    continue;
-  } else if (tableBuf.length) {
-    flushTable();
-  }
-
-  const heading = line.match(/^(#{1,3})\s+(.*)$/);
-  if (heading) {
-    closeList(openList);
-    openList = false;
-    const level = heading[1].length;
-    const text = heading[2].trim();
-    const slug = slugify(text);
-    if (level <= 2) toc.push({ level, text, slug });
-    html += `<h${level} id="${slug}">${inline(text)}<a class="anchor" href="#${slug}" aria-label="Link to this section">#</a></h${level}>\n`;
-    i++;
-    continue;
-  }
-
-  const listItem = line.match(/^-\s+(.*)$/);
-  if (listItem) {
-    if (!openList) {
-      html += '<ul>\n';
-      openList = true;
-    }
-    let text = listItem[1];
-    while (lines[i + 1] && /^\s{2,}\S/.test(lines[i + 1])) {
-      i++;
-      text += ' ' + lines[i].trim();
-    }
-    html += `<li>${inline(text)}</li>\n`;
-    i++;
-    continue;
-  } else if (openList) {
-    closeList(openList);
-    openList = false;
-  }
-
-  if (line.trim() === '') {
-    i++;
-    continue;
-  }
-
-  html += `<p>${inline(line.trim())}</p>\n`;
-  i++;
-}
-closeList(openList);
-flushTable();
+const html = md.render(source);
 
 const navLinks = toc
   .map((t) => `<a class="nav-link lvl-${t.level}" href="#${t.slug}">${escapeHtml(t.text)}</a>`)
@@ -318,8 +293,15 @@ const page = `<!doctype html>
   table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
   th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
   th { background: var(--code-bg); }
-  ul { padding-left: 1.3em; }
+  ul, ol { padding-left: 1.3em; }
   li { margin: 0.3em 0; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+  }
+  em { font-style: italic; }
   .top-links { display: flex; flex-wrap: wrap; gap: 14px; margin: 1em 0 2em; font-size: 0.9em; }
   footer.page-footer {
     margin-top: 3em;
@@ -337,12 +319,11 @@ ${navLinks}
 </nav>
 <main>
 <div class="top-links">
-<a href="https://github.com/alekslinde/rinsa">GitHub</a>
+<a href="${repo}">GitHub</a>
 <a href="https://www.npmjs.com/package/@rinsadev/core">npm</a>
 <a href="https://alekslinde.com" rel="author">alekslinde.com</a>
 </div>
-${html}
-<footer class="page-footer">
+${html}<footer class="page-footer">
 <p>rinsa &mdash; by <a href="https://alekslinde.com" rel="author">Aleks Linde</a>. Apache-2.0 licensed.</p>
 </footer>
 </main>
@@ -368,8 +349,9 @@ document.addEventListener('click', function (e) {
 `;
 
 // Build-time, not request-time: a stable date keeps rebuilds byte-identical,
-// so an unchanged source does not churn <lastmod> on every CI run.
-const lastmod = (md.match(/^<!--\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*-->$/m) || [])[1];
+// so an unchanged source does not churn <lastmod> on every CI run. Read from
+// the raw README, before comments are stripped.
+const lastmod = (readme.match(/^<!--\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*--!?>$/m) || [])[1];
 
 const robots = `User-agent: *
 Allow: /
