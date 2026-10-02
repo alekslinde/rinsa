@@ -102,10 +102,13 @@ while (i < lines.length) {
     continue;
   }
 
-  // Single-line HTML comments carry build metadata (e.g. the sitemap's
-  // updated: marker) and must not reach the rendered page.
-  if (/^\s*<!--.*-->\s*$/.test(line)) {
-    i++;
+  // HTML comments carry build metadata (e.g. the sitemap's updated: marker)
+  // or private notes, and must never reach the rendered page. Consume the
+  // whole comment, however many lines it spans: a single-line regexp would
+  // let the inner lines of a multi-line comment fall through as paragraphs.
+  if (/^\s*<!--/.test(line)) {
+    while (i < lines.length && !/-->/.test(lines[i])) i++;
+    i++; // the line holding '-->', or past the end if unterminated
     continue;
   }
 
