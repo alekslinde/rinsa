@@ -27,6 +27,10 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": ["sanitize", "normalize", "validate", "pii", "scrub", "gdpr", "fast", "zero-dependency"],
+  "author": "Aleks Linde (https://alekslinde.com)",
+  "homepage": "https://rinsa.dev",
+  "repository": { "type": "git", "url": "git+https://github.com/alekslinde/rinsa.git" },
+  "bugs": "https://github.com/alekslinde/rinsa/issues",
   "license": "Apache-2.0",
   "engines": { "node": ">=18" },
   "devDependencies": {
