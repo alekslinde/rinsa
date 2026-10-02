@@ -52,8 +52,25 @@ function escapeHtml(s) {
 // Strip HTML comments from a fragment before it is parsed. markdown-it would
 // pass them through as raw HTML, and a comment may hold build metadata (the
 // sitemap's updated: marker) or notes that must not reach the page.
+//
+// Removing a comment can splice its surroundings into a new opener, so one
+// pass is not enough: "<!-<!-- x -->- y -->" leaves a live "<!--" behind.
+// Repeat to a fixed point, then assert no opener survived rather than
+// trusting the loop — a marker reaching the page is a silent disclosure, so
+// it should fail the build instead.
 function stripComments(md) {
-  return md.replace(/<!--[\s\S]*?--!?>/g, '');
+  let out = md;
+  let previous;
+  do {
+    previous = out;
+    out = out.replace(/<!--[\s\S]*?--!?>/g, '');
+  } while (out !== previous);
+  // An unterminated comment is the one case the loop cannot resolve: it has an
+  // opener and no terminator, so nothing matches and nothing is removed.
+  if (out.includes('<!--')) {
+    throw new Error('unterminated HTML comment in docs source; close it with -->');
+  }
+  return out;
 }
 
 // Replace the section with this heading, up to the next heading of the same or

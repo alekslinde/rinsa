@@ -119,6 +119,20 @@ describe('docs build', () => {
     assert.ok(!/<!--(?!\[if)/.test(html.replace(/<!doctype[^>]*>/i, '')), 'comment reached output');
   });
 
+  test('strips comment markers that a single pass would leave behind', () => {
+    // Removing a comment can splice its surroundings into a fresh opener, so
+    // stripping has to repeat to a fixed point.
+    const { html, error } = buildWithReadme((md) => `${md}\n<!-<!-- x -->- spliced -->\n`);
+    assert.equal(error, null, 'build should handle a spliced comment marker');
+    assert.ok(!html.includes('<!--'), 'a comment opener survived into the page');
+  });
+
+  test('refuses to build on an unterminated comment', () => {
+    const { error } = buildWithReadme((md) => `${md}\n<!-- never closed\n`);
+    assert.ok(error, 'an unterminated comment should fail the build');
+    assert.match(String(error.stderr ?? error), /unterminated HTML comment/);
+  });
+
   test('every table header declares its scope', () => {
     const html = build();
     const headers = [...html.matchAll(/<th\b[^>]*>/g)].map((m) => m[0]);
